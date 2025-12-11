@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Command Gateway</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+<style>
+  :root { --p:#6366f1; --s:#10b981; --d:#ef4444; }
+  body { font-family: 'Segoe UI',sans-serif; background: linear-gradient(135deg,#667eea,#764ba2); min-height:100vh; margin:0; color:#333; }
+  .c { max-width:1200px; margin:0 auto; padding:20px; }
+  header { text-align:center; padding:2.5rem 0; color:white; position:relative; }
+  h1 { margin:0; font-size:3rem; font-weight:800; }
+  .logout { position:absolute; top:20px; right:20px; background:#dc2626; padding:10px 20px; border-radius:12px; color:white; cursor:pointer; font-weight:600; }
+  .logout:hover { background:#b91c1c; }
+  .card { background:white; border-radius:18px; padding:2rem; margin-bottom:2rem; box-shadow:0 15px 35px rgba(0,0,0,0.2); }
+  .g { display:flex; gap:12px; margin:1.5rem 0; flex-wrap:wrap; }
+  input,select,button { padding:14px 18px; border-radius:12px; border:1px solid #ddd; font-size:1rem; }
+  input,select { flex:1; min-width:200px; }
+  button { background:var(--p); color:white; border:none; cursor:pointer; font-weight:600; }
+  button:hover { background:#4f46e5; }
+  button.danger { background:var(--d); }
+  button.danger:hover { background:#b91c1c; }
+  table { width:100%; border-collapse:collapse; margin-top:1rem; background:white; border-radius:12px; overflow:hidden; box-shadow:0 5px 15px rgba(0,0,0,0.1); }
+  th { background:#f8fafc; padding:16px; text-align:left; font-weight:600; }
+  td { padding:14px 16px; border-bottom:1px solid #f1f5f9; }
+  .status-executed { background:#d1fae5; color:var(--s); padding:6px 12px; border-radius:8px; font-weight:bold; }
+  .status-rejected { background:#fee2e2; color:var(--d); padding:6px 12px; border-radius:8px; font-weight:bold; }
+  .badge-admin { background:#fee2e2; color:#991b1b; padding:6px 12px; border-radius:20px; font-weight:bold; }
+  .badge-member { background:#dbeafe; color:#1e40af; padding:6px 12px; border-radius:20px; font-weight:bold; }
+  .hidden { display:none; }
+  .alert-success { background:#ecfdf5; color:#166534; padding:14px; border-radius:12px; border:1px solid var(--s); margin:10px 0; }
+  .api-key { font-family: monospace; background:#f3f4f6; padding:8px 12px; border-radius:8px; font-size:0.9rem; word-break:break-all; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Command Gateway</h1>
+  <p>Secure • Fast • Full Control</p>
+  <div class="logout" onclick="logout()">Logout</div>
+</header>
+
+<div class="c">
+  <div class="card" id="loginCard">
+    <h2>Login</h2>
+    <div class="g"><input type="text" id="apiKey" placeholder="Paste API key"><button onclick="login()">Login</button></div>
+  </div>
+
+  <div id="main" class="hidden">
+    <div class="card">
+      <h2>Dashboard</h2>
+      <p>Name: <span id="name"></span> | Role: <span id="role"></span> | Credits: <span id="credits" style="font-size:1.8rem;color:var(--p)"></span></p>
+    </div>
+
+    <div class="card">
+      <h2>Submit Command</h2>
+      <div class="g"><input type="text" id="cmdInput" placeholder="e.g. ls -la, pwd, rm -rf /"><button onclick="submitCmd()">Submit</button></div>
+      <div id="result"></div>
+    </div>
+
+    <div class="card">
+      <h2>Command History</h2>
+      <table><thead><tr><th>#</th><th>Command</th><th>Status</th><th>Time</th></tr></thead><tbody id="historyBody"></tbody></table>
+    </div>
+
+    <div id="adminPanel" class="hidden">
+      <h2 style="color:var(--p);margin-top:2rem;">Admin Panel</h2>
+
+      <div class="card">
+        <h3>Create User</h3>
+        <div class="g">
+          <input id="uName" placeholder="Name">
+          <select id="uRole"><option>member</option><option><option>admin</option></select>
+          <input id="uCredits" type="number" value="100">
+          <button onclick="createUser()">Create User</button>
+        </div>
+        <div class="alert-success" id="createMsg" style="display:none;"></div>
+
+        <h3 style="margin-top:2rem;">Users List</h3>
+        <table>
+          <thead><tr><th>ID</th><th>Name</th><th>Role</th><th>Credits</th><th>API Key</th><th>Action</th></tr></thead>
+          <tbody id="usersTable"></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <h3>Rules</h3>
+        <div class="g">
+          <input id="rName" placeholder="Name (optional)">
+          <input id="rPattern" placeholder="Regex pattern">
+          <select id="rAction"><option>AUTO_ACCEPT</option><option>AUTO_REJECT</option></select>
+          <button onclick="createRule()">Add Rule</button>
+        </div>
+        <div id="rulesList"></div>
+      </div>
+
+      <div class="card">
+        <h3>Audit Log</h3>
+        <table><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Details</th></tr></thead><tbody id="auditBody"></tbody></table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let KEY = "", IS_ADMIN = false;
+
+function login() {
+  KEY = document.getElementById("apiKey").value.trim();
+  if (!KEY) return alert("Enter API key");
+  fetch("/whoami", {headers: {Authorization: `Bearer ${KEY}`}})
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(d => {
+      document.getElementById("loginCard").classList.add("hidden");
+      document.getElementById("main").classList.remove("hidden");
+      document.getElementById("name").textContent = d.name;
+      document.getElementById("credits").textContent = d.credits;
+      document.getElementById("role").innerHTML = d.is_admin ? `<span class="badge-admin">ADMIN</span>` : `<span class="badge-member">MEMBER</span>`;
+      IS_ADMIN = d.is_admin;
+      if (IS_ADMIN) document.getElementById("adminPanel").classList.remove("hidden");
+      loadHistory();
+      setInterval(loadHistory, 3000);
+      if (IS_ADMIN) { loadAdminData(); setInterval(loadAdminData, 15000); }
+    })
+    .catch(() => alert("Invalid API key"));
+}
+
+function logout() {
+  KEY = "";
+  document.getElementById("main").classList.add("hidden");
+  document.getElementById("loginCard").classList.remove("hidden");
+  document.getElementById("apiKey").value = "";
+}
+
+function submitCmd() {
+  const cmd = document.getElementById("cmdInput").value.trim();
+  if (!cmd) return;
+  fetch("/commands", {method: "POST", headers: {"Content-Type": "application/json", Authorization: `Bearer ${KEY}`}, body: JSON.stringify({command_text: cmd})})
+    .then(r => r.json())
+    .then(d => {
+      document.getElementById("result").innerHTML = d.status === "executed" 
+        ? `<div class="alert-success">EXECUTED</div>`
+        : `<div class="alert-danger">REJECTED – ${d.reason}</div>`;
+      if (d.new_balance !== undefined) document.getElementById("credits").textContent = d.new_balance;
+      document.getElementById("cmdInput").value = "";
+      loadHistory();
+    });
+}
+
+function loadHistory() {
+  fetch("/commands", {headers: {Authorization: `Bearer ${KEY}`}})
+    .then(r => r.json())
+    .then(cmds => {
+      const tbody = document.getElementById("historyBody");
+      tbody.innerHTML = "";
+      cmds.forEach(c => {
+        tbody.innerHTML += `<tr>
+          <td><strong>#${c.id}</strong></td>
+          <td><code>${c.text}</code></td>
+          <td><span class="status-${c.status}">${c.status.toUpperCase()}</span></td>
+          <td>${new Date(c.created_at).toLocaleString()}</td>
+        </tr>`;
+      });
+    });
+}
+
+function createUser() {
+  const data = {
+    name: document.getElementById("uName").value || "user",
+    role: document.getElementById("uRole").value,
+    credits: +document.getElementById("uCredits").value || 100
+  };
+  fetch("/admin/users", {
+    method: "POST",
+    headers: {"Content-Type": "application/json", Authorization: `Bearer ${KEY}`},
+    body: JSON.stringify(data)
+  })
+  .then(r => r.json())
+  .then(d => {
+    const msg = document.getElementById("createMsg");
+    msg.style.display = "block";
+    msg.innerHTML = `<strong>User Created!</strong><br>API Key: <span class="api-key">${d.api_key}</span>`;
+    document.getElementById("uName").value = "";
+    document.getElementById("uCredits").value = "100";
+    loadAdminData();
+  });
+}
+
+function deleteUser(userId) {
+  if (!confirm("Delete this user permanently?")) return;
+  fetch(`/admin/users/${userId}`, {
+    method: "DELETE",
+    headers: { "Authorization": `Bearer ${KEY}` }
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.success) {
+      alert("User deleted successfully!");
+    } else {
+      alert("Error: " + (data.error || "Cannot delete"));
+    }
+    loadAdminData();
+  })
+  .catch(() => alert("Delete failed"));
+}
+
+function createRule() {
+  const data = {
+    name: document.getElementById("rName").value,
+    pattern: document.getElementById("rPattern").value,
+    action: document.getElementById("rAction").value
+  };
+  fetch("/admin/rules", {
+    method:"POST",
+    headers: {"Content-Type":"application/json", Authorization: `Bearer ${KEY}`},
+    body: JSON.stringify(data)
+  }).then(() => {
+    alert("Rule added!");
+    loadAdminData();
+  });
+}
+
+function loadAdminData() {
+  fetch("/admin/users", {headers: {Authorization: `Bearer ${KEY}`}}).then(r=>r.json()).then(u=> {
+    document.getElementById("usersTable").innerHTML = u.map(x=>`
+      <tr>
+        <td>${x.id}</td>
+        <td>${x.name}</td>
+        <td><span class="badge-${x.role}">${x.role.toUpperCase()}</span></td>
+        <td><strong>${x.credits}</strong></td>
+        <td><span class="api-key">${x.api_key}</span></td>
+        <td><button class="danger" onclick="deleteUser(${x.id})">Delete</button></td>
+      </tr>`).join("");
+  });
+
+  fetch("/rules", {headers: {Authorization: `Bearer ${KEY}`}}).then(r=>r.json()).then(r=> {
+    document.getElementById("rulesList").innerHTML = r.map(x=>`
+      <div style="padding:10px 0;border-bottom:1px solid #eee">
+        <strong>${x.name||"Unnamed"}</strong>: <code>${x.pattern}</code> → ${x.action.replace("AUTO_","")}
+      </div>`).join("");
+  });
+
+  fetch("/admin/audit", {headers: {Authorization: `Bearer ${KEY}`}}).then(r=>r.json()).then(l=> {
+    document.getElementById("auditBody").innerHTML = l.slice(0,30).map(x=>`
+      <tr><td>${new Date(x.time).toLocaleString()}</td><td>${x.user_id||'system'}</td><td><strong>${x.action}</strong></td><td>${JSON.stringify(x.meta)}</td></tr>`).join("");
+  });
+}
+</script>
+</body>
+</html>
